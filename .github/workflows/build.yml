@@ -1,0 +1,31 @@
+name: Pil Takip Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kaynak kodu indir
+        uses: actions/checkout@v4
+      - name: Java 17 kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK kur
+        uses: android-actions/setup-android@v3
+      - name: APK derle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.9'
+          arguments: assembleDebug
+      - name: APK dosyasını yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: PilTakip-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
