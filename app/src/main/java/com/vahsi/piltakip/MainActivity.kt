@@ -126,9 +126,8 @@ fun PilTakipApp() {
 
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable {
-                        chooseDateTime(System.currentTimeMillis()) { picked ->
-                            saveHistory(listOf(picked) + history)
-                        }
+                        // Boş giriş satırına dokununca tarih/saat anında kaydedilir.
+                        saveHistory(listOf(System.currentTimeMillis()) + history)
                     },
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
