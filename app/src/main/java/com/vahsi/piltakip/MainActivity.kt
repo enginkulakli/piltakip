@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -31,8 +33,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun formatDate(time: Long): String =
-    SimpleDateFormat("dd.MM.yyyy", Locale("tr", "TR")).format(Date(time))
+private fun formatDateTime(time: Long): String =
+    SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("tr", "TR")).format(Date(time))
 
 private fun nextDate(time: Long, days: Int): Long =
     Calendar.getInstance().apply {
@@ -40,26 +42,72 @@ private fun nextDate(time: Long, days: Int): Long =
         add(Calendar.DAY_OF_YEAR, days)
     }.timeInMillis
 
+private fun loadHistories(prefs: android.content.SharedPreferences): Map<String, List<Long>> {
+    val result = mutableMapOf<String, List<Long>>()
+    val saved = prefs.getString("histories_by_type", null)
+    if (saved != null) {
+        runCatching {
+            val obj = JSONObject(saved)
+            obj.keys().forEach { key ->
+                val arr = obj.optJSONArray(key) ?: JSONArray()
+                result[key] = (0 until arr.length()).mapNotNull { i ->
+                    arr.optLong(i).takeIf { it > 0L }
+                }.distinct().sortedDescending()
+            }
+        }
+    } else {
+        // Önceki sürümdeki kayıtları kaybetmeden varsayılan kategoriye aktar.
+        val old = runCatching { JSONArray(prefs.getString("history", "[]")) }.getOrNull() ?: JSONArray()
+        val records = (0 until old.length()).mapNotNull { i ->
+            old.optLong(i).takeIf { it > 0L }
+        }.distinct().sortedDescending()
+        if (records.isNotEmpty()) result["Sensör pili"] = records
+    }
+    return result
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PilTakipApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { context.getSharedPreferences("pil_takip", 0) }
     var interval by remember { mutableIntStateOf(prefs.getInt("interval", 28)) }
-    var history by remember {
-        mutableStateOf(run {
-            val array = runCatching { JSONArray(prefs.getString("history", "[]")) }.getOrNull() ?: JSONArray()
-            (0 until array.length()).mapNotNull { i -> array.optLong(i).takeIf { it > 0L } }
-                .distinct().sortedDescending()
-        })
+    var categories by remember {
+        mutableStateOf(
+            run {
+                val arr = runCatching { JSONArray(prefs.getString("categories", null)) }.getOrNull()
+                if (arr == null) listOf("Sensör pili", "Pompa pili", "Saat pili")
+                else (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
+                    .ifEmpty { listOf("Sensör pili", "Pompa pili", "Saat pili") }
+            }
+        )
     }
+    var selectedCategory by remember { mutableStateOf(categories.first()) }
+    var histories by remember { mutableStateOf(loadHistories(prefs)) }
+    var entryDate by remember { mutableStateOf<Long?>(null) }
+    var showCategoryMenu by remember { mutableStateOf(false) }
+    var showAddCategory by remember { mutableStateOf(false) }
+    var categoryInput by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var intervalInput by remember { mutableStateOf(interval.toString()) }
 
-    fun saveHistory(records: List<Long>) {
-        val cleaned = records.distinct().sortedDescending()
-        history = cleaned
-        prefs.edit().putString("history", JSONArray(cleaned).toString()).apply()
+    fun saveHistories(updated: Map<String, List<Long>>) {
+        histories = updated
+        val obj = JSONObject()
+        updated.forEach { (key, values) -> obj.put(key, JSONArray(values.distinct().sortedDescending())) }
+        prefs.edit().putString("histories_by_type", obj.toString()).apply()
+    }
+
+    fun saveCategories(updated: List<String>) {
+        categories = updated
+        prefs.edit().putString("categories", JSONArray(updated).toString()).apply()
+    }
+
+    fun addRecord(time: Long) {
+        val updated = histories.toMutableMap()
+        updated[selectedCategory] = (listOf(time) + (histories[selectedCategory] ?: emptyList()))
+            .distinct().sortedDescending()
+        saveHistories(updated)
     }
 
     fun chooseDateTime(initial: Long, onPicked: (Long) -> Unit) {
@@ -98,112 +146,166 @@ fun PilTakipApp() {
             }
         ) { innerPadding ->
             Column(
-                modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp)
+                modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    "DEĞİŞİM TARİHLERİ",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(10.dp))
+                Box {
+                    OutlinedButton(
+                        onClick = { showCategoryMenu = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(selectedCategory, modifier = Modifier.weight(1f))
+                        Text("⌄")
+                    }
+                    DropdownMenu(
+                        expanded = showCategoryMenu,
+                        onDismissRequest = { showCategoryMenu = false }
+                    ) {
+                        categories.forEach { category ->
+                            DropdownMenuItem(
+                                text = { Text(category) },
+                                onClick = {
+                                    selectedCategory = category
+                                    entryDate = null
+                                    showCategoryMenu = false
+                                }
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("＋ Yeni pil türü ekle") },
+                            onClick = {
+                                showCategoryMenu = false
+                                categoryInput = ""
+                                showAddCategory = true
+                            }
+                        )
+                    }
+                }
+
+                Text("DEĞİŞİM TARİHLERİ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "Değişim Tarihi",
-                        modifier = Modifier.weight(1f),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "Sonraki Değişim",
-                        modifier = Modifier.weight(1f),
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Text("Değişim Tarihi / Saat", modifier = Modifier.weight(1.15f), fontWeight = FontWeight.SemiBold)
+                    Text("Sonraki Değişim", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(68.dp))
                 }
-                Spacer(Modifier.height(6.dp))
 
                 Card(
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        // Boş giriş satırına dokununca tarih/saat anında kaydedilir.
-                        saveHistory(listOf(System.currentTimeMillis()) + history)
-                    },
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp, horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Column(
+                            modifier = Modifier.weight(1.15f).clickable {
+                                chooseDateTime(entryDate ?: System.currentTimeMillis()) { entryDate = it }
+                            }.padding(vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.CalendarMonth, contentDescription = null)
-                            Text("Tarih ekle", fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = null)
+                                Spacer(Modifier.width(5.dp))
+                                Text(entryDate?.let { formatDateTime(it) } ?: "Tarih ve saat seç", fontWeight = FontWeight.SemiBold)
+                            }
                         }
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Column(modifier = Modifier.weight(1f).padding(vertical = 10.dp)) {
+                            Text(entryDate?.let { formatDateTime(nextDate(it, interval)) } ?: "—", fontWeight = FontWeight.SemiBold)
+                        }
+                        Button(
+                            onClick = {
+                                entryDate?.let { addRecord(it); entryDate = null }
+                            },
+                            enabled = entryDate != null,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                         ) {
-                            Text("Otomatik hesaplanır", style = MaterialTheme.typography.bodySmall)
+                            Text("Ekle")
                         }
                     }
                 }
 
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "GEÇMİŞ KAYITLAR",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(8.dp))
+                Text("GEÇMİŞ KAYITLAR", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
-                if (history.isEmpty()) {
-                    Text("Henüz kayıt yok. Yukarıdaki satıra dokunarak ilk tarihi ekle.")
+                val selectedHistory = histories[selectedCategory] ?: emptyList()
+                if (selectedHistory.isEmpty()) {
+                    Text("Henüz kayıt yok.")
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(history) { record ->
+                        items(selectedHistory) { record ->
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 12.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(
-                                        modifier = Modifier.weight(1f).clickable {
+                                        modifier = Modifier.weight(1.15f).clickable {
                                             chooseDateTime(record) { picked ->
-                                                val updated = history.toMutableList()
-                                                val index = updated.indexOf(record)
-                                                if (index >= 0) updated[index] = picked
-                                                saveHistory(updated)
+                                                val updated = (histories[selectedCategory] ?: emptyList())
+                                                    .filterNot { it == record } + picked
+                                                val all = histories.toMutableMap()
+                                                all[selectedCategory] = updated.distinct().sortedDescending()
+                                                saveHistories(all)
                                             }
                                         }
                                     ) {
-                                        Text(formatDate(record), fontWeight = FontWeight.SemiBold)
+                                        Text(formatDateTime(record), fontWeight = FontWeight.SemiBold)
                                         Text("Değişim tarihi", style = MaterialTheme.typography.labelSmall)
                                     }
                                     Column(
                                         modifier = Modifier.weight(1f).clickable {
-                                            val scheduled = nextDate(record, interval)
-                                            saveHistory(listOf(scheduled) + history)
+                                            val all = histories.toMutableMap()
+                                            all[selectedCategory] = (listOf(nextDate(record, interval)) + selectedHistory)
+                                                .distinct().sortedDescending()
+                                            saveHistories(all)
                                         }
                                     ) {
-                                        Text(formatDate(nextDate(record, interval)), fontWeight = FontWeight.SemiBold)
-                                        Text("Sonraki değişim", style = MaterialTheme.typography.labelSmall)
+                                        Text(formatDateTime(nextDate(record, interval)), fontWeight = FontWeight.SemiBold)
+                                        Text("Dokun: bu tarihte değiştir", style = MaterialTheme.typography.labelSmall)
                                     }
+                                    Spacer(Modifier.width(8.dp))
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+
+        if (showAddCategory) {
+            AlertDialog(
+                onDismissRequest = { showAddCategory = false },
+                title = { Text("Pil türü ekle") },
+                text = {
+                    OutlinedTextField(
+                        value = categoryInput,
+                        onValueChange = { categoryInput = it },
+                        label = { Text("Örn. Kumanda pili") },
+                        singleLine = true
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val name = categoryInput.trim()
+                        if (name.isNotEmpty() && categories.none { it.equals(name, true) }) {
+                            saveCategories(categories + name)
+                            selectedCategory = name
+                            entryDate = null
+                        }
+                        showAddCategory = false
+                    }) { Text("Ekle") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAddCategory = false }) { Text("İptal") }
+                }
+            )
         }
 
         if (showSettings) {
