@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -203,15 +204,21 @@ fun PilTakipApp() {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.weight(1.15f).clickable {
-                                chooseDateTime(entryDate ?: System.currentTimeMillis()) { entryDate = it }
-                            }.padding(vertical = 10.dp)
+                        Row(
+                            modifier = Modifier.weight(1.15f),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.CalendarMonth, contentDescription = null)
-                                Spacer(Modifier.width(5.dp))
-                                Text(entryDate?.let { formatDateTime(it) } ?: "Tarih ve saat seç", fontWeight = FontWeight.SemiBold)
+                            Column(
+                                modifier = Modifier.weight(1f).clickable {
+                                    entryDate = System.currentTimeMillis()
+                                }.padding(vertical = 10.dp)
+                            ) {
+                                Text(entryDate?.let { formatDateTime(it) } ?: "Dokun: şimdi", fontWeight = FontWeight.SemiBold)
+                            }
+                            IconButton(onClick = {
+                                chooseDateTime(entryDate ?: System.currentTimeMillis()) { entryDate = it }
+                            }) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = "Tarih ve saat seç")
                             }
                         }
                         Column(modifier = Modifier.weight(1f).padding(vertical = 10.dp)) {
@@ -270,7 +277,13 @@ fun PilTakipApp() {
                                         Text(formatDateTime(nextDate(record, interval)), fontWeight = FontWeight.SemiBold)
                                         Text("Dokun: bu tarihte değiştir", style = MaterialTheme.typography.labelSmall)
                                     }
-                                    Spacer(Modifier.width(8.dp))
+                                    IconButton(onClick = {
+                                        val all = histories.toMutableMap()
+                                        all[selectedCategory] = selectedHistory.filterNot { it == record }
+                                        saveHistories(all)
+                                    }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Kaydı sil", tint = MaterialTheme.colorScheme.error)
+                                    }
                                 }
                             }
                         }
